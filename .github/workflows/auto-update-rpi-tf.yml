@@ -1,6 +1,7 @@
-name: Update Trusted Firmware
+name: Update RPi TF-A
 
 on:
+  workflow_dispatch:
   workflow_run:
     workflows: ["TF-A - Raspberry Pi build"]
     types:
