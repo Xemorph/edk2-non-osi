@@ -1,7 +1,16 @@
 name: Update RPi TF-A
 
+name: Update Trusted Firmware
+
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release Tag to fetch (optional, default: latest)'
+        required: false
+      platforms:
+        description: 'Comma-separated list of platforms to update (default: rpi3,rpi4,rpi5)'
+        required: false
   workflow_run:
     workflows: ["TF-A - Raspberry Pi build"]
     types:
@@ -9,7 +18,7 @@ on:
 
 jobs:
   update-tfa:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -23,18 +32,38 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl tar xz-utils rsync git jq
 
-      - name: Download TF-A artifacts
-        env:
-          OLD_REPO: Xemorph/pitf
+      - name: Set variables
         run: |
-          RELEASE_TAG=$(curl -s https://api.github.com/repos/$OLD_REPO/releases/latest | jq -r '.tag_name')
-          echo "Latest release: $RELEASE_TAG"
+          if [ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]; then
+            RELEASE_TAG="${{ github.event.inputs.release_tag }}"
+            PLATFORMS="${{ github.event.inputs.platforms }}"
+          else
+            RELEASE_TAG=""
+            PLATFORMS="rpi3,rpi4,rpi5"
+          fi
 
+          # Fallback: latest release if not specified
+          if [ -z "$RELEASE_TAG" ]; then
+            RELEASE_TAG=$(curl -s https://api.github.com/repos/Xemorph/pitf/releases/latest | jq -r '.tag_name')
+          fi
+
+          # Fallback platforms
+          if [ -z "$PLATFORMS" ]; then
+            PLATFORMS="rpi3,rpi4,rpi5"
+          fi
+
+          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
+          echo "PLATFORMS=$PLATFORMS" >> $GITHUB_ENV
+          echo "Using release: $RELEASE_TAG"
+          echo "Platforms: $PLATFORMS"
+
+      - name: Download TF-A artifacts
+        run: |
           mkdir -p tmp_artifacts
           cd tmp_artifacts
-
-          for platform in rpi3 rpi4 rpi5; do
-            URL="https://github.com/$OLD_REPO/releases/download/$RELEASE_TAG/${platform}-tf-a.tar.xz"
+          IFS=',' read -ra PLAT <<< "$PLATFORMS"
+          for platform in "${PLAT[@]}"; do
+            URL="https://github.com/Xemorph/pitf/releases/download/$RELEASE_TAG/${platform}-tf-a.tar.xz"
             echo "Downloading $URL"
             curl -L -o ${platform}-tf-a.tar.xz $URL
           done
@@ -43,9 +72,11 @@ jobs:
       - name: Extract artifacts
         run: |
           mkdir -p tmp_extracted
-          tar -xJf tmp_artifacts/rpi3-tf-a.tar.xz -C tmp_extracted/rpi3
-          tar -xJf tmp_artifacts/rpi4-tf-a.tar.xz -C tmp_extracted/rpi4
-          tar -xJf tmp_artifacts/rpi5-tf-a.tar.xz -C tmp_extracted/rpi5
+          IFS=',' read -ra PLAT <<< "$PLATFORMS"
+          for platform in "${PLAT[@]}"; do
+            mkdir -p tmp_extracted/$platform
+            tar -xJf tmp_artifacts/${platform}-tf-a.tar.xz -C tmp_extracted/$platform
+          done
 
       - name: Sync artifacts to Platform folders
         run: |
@@ -53,9 +84,20 @@ jobs:
           mkdir -p Platform/RaspberryPi/RPi4/TrustedFirmware
           mkdir -p Platform/RaspberryPi/RPi5/TrustedFirmware
 
-          rsync -a --delete tmp_extracted/rpi3/ Platform/RaspberryPi/RPi3/TrustedFirmware/
-          rsync -a --delete tmp_extracted/rpi4/ Platform/RaspberryPi/RPi4/TrustedFirmware/
-          rsync -a --delete tmp_extracted/rpi5/ Platform/RaspberryPi/RPi5/TrustedFirmware/
+          IFS=',' read -ra PLAT <<< "$PLATFORMS"
+          for platform in "${PLAT[@]}"; do
+            case "$platform" in
+              rpi3)
+                rsync -a --delete tmp_extracted/rpi3/ Platform/RaspberryPi/RPi3/TrustedFirmware/
+                ;;
+              rpi4)
+                rsync -a --delete tmp_extracted/rpi4/ Platform/RaspberryPi/RPi4/TrustedFirmware/
+                ;;
+              rpi5)
+                rsync -a --delete tmp_extracted/rpi5/ Platform/RaspberryPi/RPi5/TrustedFirmware/
+                ;;
+            esac
+          done
 
       - name: Commit & push changes
         run: |
@@ -65,6 +107,5 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "RPi: update to TF-A $RELEASE_TAG"
+            git commit -m "Platform/RasppberryPi: update to TF-A $RELEASE_TAG"
             git push origin master
-          fi
