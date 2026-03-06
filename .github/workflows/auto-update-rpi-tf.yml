@@ -1,0 +1,69 @@
+name: Update Trusted Firmware
+
+on:
+  workflow_run:
+    workflows: ["TF-A - Raspberry Pi build"]
+    types:
+      - completed
+
+jobs:
+  update-tfa:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: master
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl tar xz-utils rsync git jq
+
+      - name: Download TF-A artifacts
+        env:
+          OLD_REPO: Xemorph/pitf
+        run: |
+          RELEASE_TAG=$(curl -s https://api.github.com/repos/$OLD_REPO/releases/latest | jq -r '.tag_name')
+          echo "Latest release: $RELEASE_TAG"
+
+          mkdir -p tmp_artifacts
+          cd tmp_artifacts
+
+          for platform in rpi3 rpi4 rpi5; do
+            URL="https://github.com/$OLD_REPO/releases/download/$RELEASE_TAG/${platform}-tf-a.tar.xz"
+            echo "Downloading $URL"
+            curl -L -o ${platform}-tf-a.tar.xz $URL
+          done
+          cd ..
+
+      - name: Extract artifacts
+        run: |
+          mkdir -p tmp_extracted
+          tar -xJf tmp_artifacts/rpi3-tf-a.tar.xz -C tmp_extracted/rpi3
+          tar -xJf tmp_artifacts/rpi4-tf-a.tar.xz -C tmp_extracted/rpi4
+          tar -xJf tmp_artifacts/rpi5-tf-a.tar.xz -C tmp_extracted/rpi5
+
+      - name: Sync artifacts to Platform folders
+        run: |
+          mkdir -p Platform/RaspberryPi/RPi3/TrustedFirmware
+          mkdir -p Platform/RaspberryPi/RPi4/TrustedFirmware
+          mkdir -p Platform/RaspberryPi/RPi5/TrustedFirmware
+
+          rsync -a --delete tmp_extracted/rpi3/ Platform/RaspberryPi/RPi3/TrustedFirmware/
+          rsync -a --delete tmp_extracted/rpi4/ Platform/RaspberryPi/RPi4/TrustedFirmware/
+          rsync -a --delete tmp_extracted/rpi5/ Platform/RaspberryPi/RPi5/TrustedFirmware/
+
+      - name: Commit & push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Platform/RaspberryPi
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "RPi: update to TF-A $RELEASE_TAG"
+            git push origin master
+          fi
