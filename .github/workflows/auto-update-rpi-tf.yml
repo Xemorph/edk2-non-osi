@@ -1,7 +1,5 @@
 name: Update RPi TF-A
 
-name: Update Trusted Firmware
-
 on:
   workflow_dispatch:
     inputs:
