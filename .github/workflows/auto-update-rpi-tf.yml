@@ -107,3 +107,4 @@ jobs:
           else
             git commit -m "Platform/RasppberryPi: update to TF-A $RELEASE_TAG"
             git push origin master
+          fi
